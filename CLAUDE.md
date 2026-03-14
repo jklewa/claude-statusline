@@ -90,6 +90,7 @@ Real-time usage tracking statusline for Claude Code using shim architecture.
 - **Daily cost tracking** - `get_daily_cost()` with caching, aligned to weekly reset time
 - **Daily projection** - Uses 5-hour window: `daily_cost - window_cost + projected_window_cost`
 - **Daily recommendation** - Stable budget recommendation, updates only at daily cycle reset
+- **Model-aware context limits** - Auto-detects model from transcript, per-model context window sizes
 - **Conditional rendering** - Only computes enabled sections for performance
 - **Configurable colors** - Per-layer color customization
 
@@ -131,6 +132,7 @@ Real-time usage tracking statusline for Claude Code using shim architecture.
 **Key settings**:
 - `user.plan` - pro/max5x/max20x
 - `limits.weekly`, `limits.cost` - Usage limits
+- `limits.context` - Per-model context limits (auto-detected, e.g., `default: 200`, `claude-opus-4-6: 1000`)
 - `multi_layer` - 3-layer thresholds + colors for weekly/5-hour window
 - `daily_layer` - 2-layer thresholds + colors (14.29% normal, 21.44% exceeding)
 - `sections.show_*` - Toggle individual sections

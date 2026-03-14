@@ -63,9 +63,9 @@ validate_config() {
     # Validate limits
     check_required ".limits.weekly.$plan"
     check_required ".limits.cost"
-    check_required ".limits.context"
+    check_required ".limits.context.default"
     check_numeric_range ".limits.cost" 0 1000
-    check_numeric_range ".limits.context" 0 1000
+    check_numeric_range ".limits.context.default" 0 2000
 
     # Validate multi-layer settings (5-hour window)
     check_required ".multi_layer.layer1.threshold_multiplier"
@@ -160,7 +160,8 @@ if [ -f "$CONFIG_FILE" ]; then
     WEEKLY_LIMIT_PRO=$(echo "$CONFIG" | jq -r '.limits.weekly.pro')
     WEEKLY_LIMIT_MAX5X=$(echo "$CONFIG" | jq -r '.limits.weekly.max5x')
     WEEKLY_LIMIT_MAX20X=$(echo "$CONFIG" | jq -r '.limits.weekly.max20x')
-    CONTEXT_LIMIT=$(echo "$CONFIG" | jq -r '.limits.context')
+    CONTEXT_LIMIT_DEFAULT=$(echo "$CONFIG" | jq -r '.limits.context.default')
+    CONTEXT_LIMIT_JSON=$(echo "$CONFIG" | jq -c '.limits.context')
     COST_LIMIT=$(echo "$CONFIG" | jq -r '.limits.cost')
     TOKEN_LIMIT=$(echo "$CONFIG" | jq -r '.limits.token')
 
@@ -241,7 +242,8 @@ else
     WEEKLY_LIMIT_PRO=300
     WEEKLY_LIMIT_MAX5X=500
     WEEKLY_LIMIT_MAX20X=850
-    CONTEXT_LIMIT=168
+    CONTEXT_LIMIT_DEFAULT=200
+    CONTEXT_LIMIT_JSON='{"default":200,"claude-opus-4-6":1000,"claude-sonnet-4-6":1000}'
     COST_LIMIT=140
     TOKEN_LIMIT=220000
     CLAUDE_PROJECTS_PATH="~/.claude/projects/"
@@ -613,6 +615,20 @@ fi
 # CONTEXT SECTION (independent)
 # ====================================================================================
 if [ "$SHOW_CONTEXT" = "true" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+    # Auto-detect model from transcript and resolve context limit
+    DETECTED_MODEL=$(tail -$TRANSCRIPT_TAIL_LINES "$TRANSCRIPT_PATH" | \
+        grep '"role":"assistant"' | \
+        tail -1 | \
+        grep -o '"model":"[^"]*"' | \
+        head -1 | \
+        sed 's/"model":"//;s/"//')
+    if [ -n "$DETECTED_MODEL" ]; then
+        MODEL_LIMIT=$(echo "$CONTEXT_LIMIT_JSON" | jq -r --arg m "$DETECTED_MODEL" '.[$m] // empty')
+        CONTEXT_LIMIT=${MODEL_LIMIT:-$CONTEXT_LIMIT_DEFAULT}
+    else
+        CONTEXT_LIMIT=$CONTEXT_LIMIT_DEFAULT
+    fi
+
     # Calculate context window usage from transcript
     # Use ccusage method: latest assistant message only
     # Separate cached (system overhead) vs fresh (conversation) context
