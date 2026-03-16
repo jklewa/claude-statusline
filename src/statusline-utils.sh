@@ -154,7 +154,7 @@ get_daily_cost() {
          ) |
          .costUSD
         ] | add // 0
-    ')
+    ' 2>/dev/null) || daily_cost=0
 
     # Format to 2 decimal places
     daily_cost=$(printf "%.2f" "$daily_cost")
@@ -222,7 +222,7 @@ get_official_weekly_cost() {
          select(.startTime >= $start_iso) |
          .costUSD
         ] | add // 0
-    ')
+    ' 2>/dev/null) || weekly_cost=0
 
     # Format to 2 decimal places
     weekly_cost=$(printf "%.2f" "$weekly_cost")
@@ -290,7 +290,7 @@ get_weekly_recommend() {
          ) |
          .costUSD
         ] | add // 0
-    ')
+    ' 2>/dev/null) || weekly_cost_at_cycle_start=0
 
     # Apply baseline offset (same as current week calculation)
     if [ "$(awk "BEGIN {print ($weekly_baseline_pct != 0)}")" = "1" ]; then
@@ -389,8 +389,14 @@ get_monthly_period() {
         next_month_cycle=$(date -j -f "%Y-%m-%d %H:%M:%S" "${next_year}-${next_month}-${cycle_day} ${cycle_time}" "+%s" 2>/dev/null || true)
     fi
 
-    # Return period boundaries
-    echo "{\"start\": $this_month_cycle, \"end\": $next_month_cycle}"
+    # Guard against empty values from date fallback failures
+    if [ -z "$this_month_cycle" ] || [ -z "$next_month_cycle" ]; then
+        echo '{"start":0,"end":0}'
+        return 0
+    fi
+
+    # Return period boundaries (printf %d for safe JSON construction)
+    printf '{"start":%d,"end":%d}\n' "$this_month_cycle" "$next_month_cycle"
 }
 
 # Calculate monthly cost using ccusage blocks
@@ -442,7 +448,7 @@ get_monthly_cost() {
          select(.startTime >= $start and .startTime < $end) |
          .costUSD // 0
         ] | add // 0
-    ')
+    ' 2>/dev/null) || monthly_cost=0
 
     # Format to 2 decimal places
     monthly_cost=$(printf "%.2f" "$monthly_cost")

@@ -153,89 +153,132 @@ if [ -f "$CONFIG_FILE" ]; then
     # Validate configuration before using it
     validate_config "$CONFIG"
 
-    # User Configuration
-    USER_PLAN=$(echo "$CONFIG" | jq -r '.user.plan')
+    # Extract all config values in a single jq call (one value per line)
+    CONFIG_LINES=$(echo "$CONFIG" | jq -r '
+        .user.plan,
+        (.limits.weekly.pro | tostring),
+        (.limits.weekly.max5x | tostring),
+        (.limits.weekly.max20x | tostring),
+        (.limits.context.default | tostring),
+        (.limits.context | tojson),
+        (.limits.cost | tostring),
+        (.limits.token | tostring),
+        .paths.claude_projects,
+        (.display.bar_length | tostring),
+        (.display.transcript_tail_lines | tostring),
+        (.display.session_activity_threshold_minutes | tostring),
+        (if .display.show_labels == null then "true" else .display.show_labels | tostring end),
+        .ccusage_version,
+        (.multi_layer.layer1.threshold_multiplier | tostring),
+        (.multi_layer.layer2.threshold_multiplier | tostring),
+        (.multi_layer.layer3.threshold_multiplier | tostring),
+        .multi_layer.layer1.color,
+        .multi_layer.layer2.color,
+        .multi_layer.layer3.color,
+        (.daily_layer.layer1.threshold_multiplier | tostring),
+        (.daily_layer.layer2.threshold_multiplier | tostring),
+        .daily_layer.layer1.color,
+        .daily_layer.layer2.color,
+        (.context_layer.layer1.threshold_multiplier | tostring),
+        (.context_layer.layer2.threshold_multiplier | tostring),
+        (.context_layer.layer3.threshold_multiplier | tostring),
+        .context_layer.layer1.color,
+        .context_layer.layer2.color,
+        .context_layer.layer3.color,
+        (if .sections.show_directory == null then "true" else .sections.show_directory | tostring end),
+        (if .sections.show_context == null then "true" else .sections.show_context | tostring end),
+        (if .sections.show_five_hour_window == null then "true" else .sections.show_five_hour_window | tostring end),
+        (if .sections.show_daily == null then "true" else .sections.show_daily | tostring end),
+        (if .sections.show_weekly == null then "true" else .sections.show_weekly | tostring end),
+        (if .sections.show_monthly == null then "false" else .sections.show_monthly | tostring end),
+        (if .sections.show_timer == null then "true" else .sections.show_timer | tostring end),
+        (if .sections.show_token_rate == null then "true" else .sections.show_token_rate | tostring end),
+        (if .sections.show_sessions == null then "true" else .sections.show_sessions | tostring end),
+        .sections.weekly_display_mode,
+        .tracking.weekly_scheme,
+        (.tracking.official_reset_date // ""),
+        (.tracking.payment_cycle_start_date // ""),
+        (.tracking.weekly_baseline_percent | tostring),
+        (.tracking.cache_duration_seconds | tostring),
+        .colors.orange,
+        .colors.bright_orange,
+        .colors.dim_orange,
+        .colors.red,
+        .colors.dim_red,
+        .colors.pink,
+        .colors.dim_pink,
+        .colors.bright_pink,
+        .colors.green,
+        .colors.dim_green,
+        .colors.purple,
+        .colors.cyan,
+        .colors.dim_blue,
+        .colors.reset
+    ')
 
-    # Limits
-    WEEKLY_LIMIT_PRO=$(echo "$CONFIG" | jq -r '.limits.weekly.pro')
-    WEEKLY_LIMIT_MAX5X=$(echo "$CONFIG" | jq -r '.limits.weekly.max5x')
-    WEEKLY_LIMIT_MAX20X=$(echo "$CONFIG" | jq -r '.limits.weekly.max20x')
-    CONTEXT_LIMIT_DEFAULT=$(echo "$CONFIG" | jq -r '.limits.context.default')
-    CONTEXT_LIMIT_JSON=$(echo "$CONFIG" | jq -c '.limits.context')
-    COST_LIMIT=$(echo "$CONFIG" | jq -r '.limits.cost')
-    TOKEN_LIMIT=$(echo "$CONFIG" | jq -r '.limits.token')
+    # Parse line-separated values into variables (one read per value)
+    {
+        read -r USER_PLAN
+        read -r WEEKLY_LIMIT_PRO
+        read -r WEEKLY_LIMIT_MAX5X
+        read -r WEEKLY_LIMIT_MAX20X
+        read -r CONTEXT_LIMIT_DEFAULT
+        read -r CONTEXT_LIMIT_JSON
+        read -r COST_LIMIT
+        read -r TOKEN_LIMIT
+        read -r CLAUDE_PROJECTS_PATH
+        read -r BAR_LENGTH
+        read -r TRANSCRIPT_TAIL_LINES
+        read -r SESSION_ACTIVITY_THRESHOLD
+        read -r SHOW_LABELS
+        read -r CCUSAGE_VERSION
+        read -r LAYER1_THRESHOLD_MULT
+        read -r LAYER2_THRESHOLD_MULT
+        read -r LAYER3_THRESHOLD_MULT
+        read -r LAYER1_COLOR
+        read -r LAYER2_COLOR
+        read -r LAYER3_COLOR
+        read -r DAILY_LAYER1_THRESHOLD_MULT
+        read -r DAILY_LAYER2_THRESHOLD_MULT
+        read -r DAILY_LAYER1_COLOR
+        read -r DAILY_LAYER2_COLOR
+        read -r CTX_LAYER1_THRESHOLD_MULT
+        read -r CTX_LAYER2_THRESHOLD_MULT
+        read -r CTX_LAYER3_THRESHOLD_MULT
+        read -r CTX_LAYER1_COLOR
+        read -r CTX_LAYER2_COLOR
+        read -r CTX_LAYER3_COLOR
+        read -r SHOW_DIRECTORY
+        read -r SHOW_CONTEXT
+        read -r SHOW_FIVE_HOUR_WINDOW
+        read -r SHOW_DAILY
+        read -r SHOW_WEEKLY
+        read -r SHOW_MONTHLY
+        read -r SHOW_TIMER
+        read -r SHOW_TOKEN_RATE
+        read -r SHOW_SESSIONS
+        read -r WEEKLY_DISPLAY_MODE
+        read -r WEEKLY_SCHEME
+        read -r OFFICIAL_RESET_DATE
+        read -r PAYMENT_CYCLE_START_DATE
+        read -r WEEKLY_BASELINE_PCT
+        read -r CACHE_DURATION
+        read -r ORANGE_CODE
+        read -r BRIGHT_ORANGE_CODE
+        read -r DIM_ORANGE_CODE
+        read -r RED_CODE
+        read -r DIM_RED_CODE
+        read -r PINK_CODE
+        read -r DIM_PINK_CODE
+        read -r BRIGHT_PINK_CODE
+        read -r GREEN_CODE
+        read -r DIM_GREEN_CODE
+        read -r PURPLE_CODE
+        read -r CYAN_CODE
+        read -r DIM_BLUE_CODE
+        read -r RESET_CODE
+    } <<< "$CONFIG_LINES"
 
-    # Paths
-    CLAUDE_PROJECTS_PATH=$(echo "$CONFIG" | jq -r '.paths.claude_projects')
-
-    # Display settings
-    BAR_LENGTH=$(echo "$CONFIG" | jq -r '.display.bar_length')
-    TRANSCRIPT_TAIL_LINES=$(echo "$CONFIG" | jq -r '.display.transcript_tail_lines')
-    SESSION_ACTIVITY_THRESHOLD=$(echo "$CONFIG" | jq -r '.display.session_activity_threshold_minutes')
-    SHOW_LABELS=$(echo "$CONFIG" | jq -r 'if .display.show_labels == null then "true" else .display.show_labels | tostring end')
-
-    # ccusage version
-    CCUSAGE_VERSION=$(echo "$CONFIG" | jq -r '.ccusage_version')
-
-    # Multi-layer settings (5-hour window)
-    LAYER1_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.multi_layer.layer1.threshold_multiplier')
-    LAYER2_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.multi_layer.layer2.threshold_multiplier')
-    LAYER3_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.multi_layer.layer3.threshold_multiplier')
-
-    LAYER1_COLOR=$(echo "$CONFIG" | jq -r '.multi_layer.layer1.color')
-    LAYER2_COLOR=$(echo "$CONFIG" | jq -r '.multi_layer.layer2.color')
-    LAYER3_COLOR=$(echo "$CONFIG" | jq -r '.multi_layer.layer3.color')
-
-    # Daily layer settings
-    DAILY_LAYER1_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.daily_layer.layer1.threshold_multiplier')
-    DAILY_LAYER2_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.daily_layer.layer2.threshold_multiplier')
-
-    DAILY_LAYER1_COLOR=$(echo "$CONFIG" | jq -r '.daily_layer.layer1.color')
-    DAILY_LAYER2_COLOR=$(echo "$CONFIG" | jq -r '.daily_layer.layer2.color')
-
-    # Context layer settings
-    CTX_LAYER1_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.context_layer.layer1.threshold_multiplier')
-    CTX_LAYER2_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.context_layer.layer2.threshold_multiplier')
-    CTX_LAYER3_THRESHOLD_MULT=$(echo "$CONFIG" | jq -r '.context_layer.layer3.threshold_multiplier')
-
-    CTX_LAYER1_COLOR=$(echo "$CONFIG" | jq -r '.context_layer.layer1.color')
-    CTX_LAYER2_COLOR=$(echo "$CONFIG" | jq -r '.context_layer.layer2.color')
-    CTX_LAYER3_COLOR=$(echo "$CONFIG" | jq -r '.context_layer.layer3.color')
-
-    # Section toggles (use 'if null' to avoid treating false as falsy)
-    SHOW_DIRECTORY=$(echo "$CONFIG" | jq -r 'if .sections.show_directory == null then "true" else .sections.show_directory | tostring end')
-    SHOW_CONTEXT=$(echo "$CONFIG" | jq -r 'if .sections.show_context == null then "true" else .sections.show_context | tostring end')
-    SHOW_FIVE_HOUR_WINDOW=$(echo "$CONFIG" | jq -r 'if .sections.show_five_hour_window == null then "true" else .sections.show_five_hour_window | tostring end')
-    SHOW_DAILY=$(echo "$CONFIG" | jq -r 'if .sections.show_daily == null then "true" else .sections.show_daily | tostring end')
-    SHOW_WEEKLY=$(echo "$CONFIG" | jq -r 'if .sections.show_weekly == null then "true" else .sections.show_weekly | tostring end')
-    SHOW_MONTHLY=$(echo "$CONFIG" | jq -r 'if .sections.show_monthly == null then "false" else .sections.show_monthly | tostring end')
-    SHOW_TIMER=$(echo "$CONFIG" | jq -r 'if .sections.show_timer == null then "true" else .sections.show_timer | tostring end')
-    SHOW_TOKEN_RATE=$(echo "$CONFIG" | jq -r 'if .sections.show_token_rate == null then "true" else .sections.show_token_rate | tostring end')
-    SHOW_SESSIONS=$(echo "$CONFIG" | jq -r 'if .sections.show_sessions == null then "true" else .sections.show_sessions | tostring end')
-    WEEKLY_DISPLAY_MODE=$(echo "$CONFIG" | jq -r '.sections.weekly_display_mode')
-
-    # Tracking settings
-    WEEKLY_SCHEME=$(echo "$CONFIG" | jq -r '.tracking.weekly_scheme')
-    OFFICIAL_RESET_DATE=$(echo "$CONFIG" | jq -r '.tracking.official_reset_date')
-    PAYMENT_CYCLE_START_DATE=$(echo "$CONFIG" | jq -r '.tracking.payment_cycle_start_date')
-    WEEKLY_BASELINE_PCT=$(echo "$CONFIG" | jq -r '.tracking.weekly_baseline_percent')
-    CACHE_DURATION=$(echo "$CONFIG" | jq -r '.tracking.cache_duration_seconds')
-
-    # Color codes (trust config is complete, no fallbacks)
-    ORANGE_CODE=$(echo "$CONFIG" | jq -r '.colors.orange' | sed 's/\\\\/\\/g')
-    BRIGHT_ORANGE_CODE=$(echo "$CONFIG" | jq -r '.colors.bright_orange' | sed 's/\\\\/\\/g')
-    DIM_ORANGE_CODE=$(echo "$CONFIG" | jq -r '.colors.dim_orange' | sed 's/\\\\/\\/g')
-    RED_CODE=$(echo "$CONFIG" | jq -r '.colors.red' | sed 's/\\\\/\\/g')
-    DIM_RED_CODE=$(echo "$CONFIG" | jq -r '.colors.dim_red' | sed 's/\\\\/\\/g')
-    PINK_CODE=$(echo "$CONFIG" | jq -r '.colors.pink' | sed 's/\\\\/\\/g')
-    DIM_PINK_CODE=$(echo "$CONFIG" | jq -r '.colors.dim_pink' | sed 's/\\\\/\\/g')
-    BRIGHT_PINK_CODE=$(echo "$CONFIG" | jq -r '.colors.bright_pink' | sed 's/\\\\/\\/g')
-    GREEN_CODE=$(echo "$CONFIG" | jq -r '.colors.green' | sed 's/\\\\/\\/g')
-    DIM_GREEN_CODE=$(echo "$CONFIG" | jq -r '.colors.dim_green' | sed 's/\\\\/\\/g')
-    PURPLE_CODE=$(echo "$CONFIG" | jq -r '.colors.purple' | sed 's/\\\\/\\/g')
-    CYAN_CODE=$(echo "$CONFIG" | jq -r '.colors.cyan' | sed 's/\\\\/\\/g')
-    DIM_BLUE_CODE=$(echo "$CONFIG" | jq -r '.colors.dim_blue' | sed 's/\\\\/\\/g')
-    RESET_CODE=$(echo "$CONFIG" | jq -r '.colors.reset' | sed 's/\\\\/\\/g')
 else
     # Default configuration (fallback if config file doesn't exist)
     USER_PLAN="max5x"
@@ -419,8 +462,8 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
     WINDOW_DATA=$(cd ~ && npx --yes "ccusage@${CCUSAGE_VERSION}" blocks --active --json --token-limit $TOKEN_LIMIT --offline 2>/dev/null | awk '/^{/,0')
 
     if [ -n "$WINDOW_DATA" ] && [ "$WINDOW_DATA" != "null" ]; then
-        # Parse window data
-        BLOCK=$(echo "$WINDOW_DATA" | jq -r '.blocks[0] // empty')
+        # Parse window data (2>/dev/null handles malformed JSON gracefully)
+        BLOCK=$(echo "$WINDOW_DATA" | jq -r '.blocks[0] // empty' 2>/dev/null) || true
 
         if [ -n "$BLOCK" ]; then
             # Extract cost and projection data (needed by daily projection)
@@ -736,7 +779,7 @@ if [ "$SHOW_WEEKLY" = "true" ] || [ "$SHOW_DAILY" = "true" ]; then
     else
         # Use ccusage with ISO weeks (default)
         WEEKLY_DATA=$(cd ~ && npx --yes "ccusage@${CCUSAGE_VERSION}" weekly --json --offline 2>/dev/null | awk '/^{/,0')
-        WEEK_COST_RAW=$(echo "$WEEKLY_DATA" | jq -r '.weekly[-1].totalCost // 0')
+        WEEK_COST_RAW=$(echo "$WEEKLY_DATA" | jq -r '.weekly[-1].totalCost // 0' 2>/dev/null) || WEEK_COST_RAW=0
     fi
 
     # Save raw cost for recommendation calculation (without baseline)
@@ -922,7 +965,7 @@ if [ "$SHOW_WEEKLY" = "true" ] && [ -n "${WEEKLY_PCT:-}" ]; then
                          ) |
                          .costUSD
                         ] | add // 0
-                    ')
+                    ' 2>/dev/null) || COST_BEFORE_CYCLE=0
 
                     # Weekly available at current daily cycle start
                     WEEKLY_AVAIL_AT_CYCLE_START=$(awk "BEGIN {printf \"%.2f\", $WEEKLY_LIMIT - $COST_BEFORE_CYCLE}")
