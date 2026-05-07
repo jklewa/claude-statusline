@@ -336,30 +336,15 @@ get_monthly_period() {
     # Get current time
     local current_time=$(date +%s)
 
-    # Extract date components from cycle start
-    local cycle_start_iso=$(timestamp_to_iso "$cycle_start")
-
-    # Try GNU date first, then macOS date
-    local cycle_day=$(date -d "$cycle_start_iso" "+%d" 2>/dev/null || true)
-    if [ -z "$cycle_day" ]; then
-        cycle_day=$(date -j -f "%Y-%m-%dT%H:%M:%S%z" "$cycle_start_iso" "+%d" 2>/dev/null || true)
-    fi
-
-    local cycle_time=$(date -d "$cycle_start_iso" "+%H:%M:%S" 2>/dev/null || true)
-    if [ -z "$cycle_time" ]; then
-        cycle_time=$(date -j -f "%Y-%m-%dT%H:%M:%S%z" "$cycle_start_iso" "+%H:%M:%S" 2>/dev/null || true)
-    fi
-
-    # Get current year and month
-    local current_year=$(date -d "@$current_time" "+%Y" 2>/dev/null || true)
-    if [ -z "$current_year" ]; then
-        current_year=$(date -j -r "$current_time" "+%Y")
-    fi
-
-    local current_month=$(date -d "@$current_time" "+%m" 2>/dev/null || true)
-    if [ -z "$current_month" ]; then
-        current_month=$(date -j -r "$current_time" "+%m")
-    fi
+    # Extract day-of-month and time-of-day from the cycle_start timestamp directly.
+    # Round-tripping through ISO and re-parsing was fragile: timestamp_to_iso emits
+    # a Z-suffixed string that BSD date's "%z" format can't parse. Reading the
+    # timestamp via -r/-d gives reliable values in the user's local timezone.
+    local cycle_day cycle_time current_year current_month
+    cycle_day=$(date -r "$cycle_start" "+%d" 2>/dev/null || date -d "@$cycle_start" "+%d" 2>/dev/null)
+    cycle_time=$(date -r "$cycle_start" "+%H:%M:%S" 2>/dev/null || date -d "@$cycle_start" "+%H:%M:%S" 2>/dev/null)
+    current_year=$(date -r "$current_time" "+%Y" 2>/dev/null || date -d "@$current_time" "+%Y" 2>/dev/null)
+    current_month=$(date -r "$current_time" "+%m" 2>/dev/null || date -d "@$current_time" "+%m" 2>/dev/null)
 
     # Build current month's cycle start (same day and time, current month)
     local this_month_cycle=$(date -d "${current_year}-${current_month}-${cycle_day} ${cycle_time}" "+%s" 2>/dev/null || true)
