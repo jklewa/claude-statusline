@@ -140,7 +140,7 @@ get_daily_cost() {
     local start_iso=$(timestamp_to_iso "$period_start")
 
     # Get all blocks from ccusage
-    local blocks_data=$(cd ~ && npx --yes ccusage blocks --json --offline 2>/dev/null | awk '/^{/,0')
+    local blocks_data=$(cd ~ && npx --yes "ccusage@${CCUSAGE_VERSION:-17.1.0}" blocks --json --token-limit "${TOKEN_LIMIT:-220000}" --offline 2>/dev/null | awk '/^{/,0')
 
     if [[ -z "$blocks_data" || "$blocks_data" == "null" ]]; then
         echo "0.00"
@@ -215,7 +215,7 @@ get_official_weekly_cost() {
     local start_iso=$(timestamp_to_iso "$period_start")
 
     # Get all blocks from ccusage
-    local blocks_data=$(cd ~ && npx --yes ccusage blocks --json --offline 2>/dev/null | awk '/^{/,0')
+    local blocks_data=$(cd ~ && npx --yes "ccusage@${CCUSAGE_VERSION:-17.1.0}" blocks --json --token-limit "${TOKEN_LIMIT:-220000}" --offline 2>/dev/null | awk '/^{/,0')
 
     if [[ -z "$blocks_data" || "$blocks_data" == "null" ]]; then
         echo "0.00"
@@ -280,7 +280,7 @@ get_weekly_recommend() {
     local period_start_iso=$(timestamp_to_iso "$period_start")
 
     # Get blocks and filter up to cycle start
-    local blocks_data=$(cd ~ && npx --yes ccusage blocks --json --offline 2>/dev/null | awk '/^{/,0')
+    local blocks_data=$(cd ~ && npx --yes "ccusage@${CCUSAGE_VERSION:-17.1.0}" blocks --json --token-limit "${TOKEN_LIMIT:-220000}" --offline 2>/dev/null | awk '/^{/,0')
 
     if [[ -z "$blocks_data" || "$blocks_data" == "null" ]]; then
         echo "0"
@@ -431,7 +431,7 @@ get_monthly_cost() {
     local end_iso=$(timestamp_to_iso "$period_end")
 
     # Get all blocks and filter by monthly period
-    local blocks_data=$(cd ~ && npx --yes "ccusage@17.1.0" blocks --json --offline 2>/dev/null | awk '/^{/,0')
+    local blocks_data=$(cd ~ && npx --yes "ccusage@${CCUSAGE_VERSION:-17.1.0}" blocks --json --token-limit "${TOKEN_LIMIT:-220000}" --offline 2>/dev/null | awk '/^{/,0')
 
     # Filter blocks within period and sum costs
     local monthly_cost=$(echo "$blocks_data" | jq -r --arg start "$start_iso" --arg end "$end_iso" '
