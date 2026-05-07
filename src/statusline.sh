@@ -609,17 +609,16 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
                 # Get current time with minutes (format: 5:45PM)
                 CURRENT_TIME=$(date "+%-l:%M%p" 2>/dev/null || date "+%I:%M%p" | sed 's/^0//')
 
-                # Format reset time (simplified format: 10PM - no minutes)
+                # Format reset time (simplified format: 10PM - no minutes) in local TZ.
+                # ccusage's endTime is UTC (e.g., "2026-05-07T07:00:00.000Z"); going
+                # via iso_to_timestamp + date -r keeps the timezone correct.
+                RESET_TIME=""
                 if [ -n "$END_TIME" ]; then
-                    # Try GNU date first (Linux), then macOS date
-                    RESET_TIME=$(date -d "$END_TIME" "+%-l%p" 2>/dev/null || true)
-                    if [ -z "$RESET_TIME" ]; then
-                        # Fallback to macOS date
-                        END_TIME_CLEAN=$(echo "$END_TIME" | sed 's/\.[0-9]*Z$//')
-                        RESET_TIME=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$END_TIME_CLEAN" "+%-l%p" 2>/dev/null || echo "")
+                    END_TIME_TS=$(iso_to_timestamp "$END_TIME")
+                    if [ -n "$END_TIME_TS" ] && [ "$END_TIME_TS" != "0" ]; then
+                        RESET_TIME=$(date -r "$END_TIME_TS" "+%-l%p" 2>/dev/null || \
+                                     date -d "@$END_TIME_TS" "+%-l%p" 2>/dev/null || echo "")
                     fi
-                else
-                    RESET_TIME=""
                 fi
 
                 # Dim color for secondary info (50% opacity effect)
