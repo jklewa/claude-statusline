@@ -20,15 +20,19 @@ timestamp_to_iso() {
 # Returns: Unix timestamp (seconds since epoch)
 iso_to_timestamp() {
     local iso_string="${1:?Missing ISO timestamp}"
-    # BSD date's %z accepts only ±HHMM, not ±HH:MM. Strip the colon from the
-    # trailing offset so macOS parses ISO 8601 timestamps that include it.
-    local normalized="$iso_string"
-    if [[ "$iso_string" =~ ^(.*)([+-][0-9][0-9]):([0-9][0-9])$ ]]; then
+    # Normalize the input for BSD date's "%z" format, which accepts only the
+    # ±HHMM form. ISO 8601 also allows ±HH:MM and "Z" (= +0000); convert both
+    # so macOS can parse them. Also drop fractional seconds (e.g. ".000Z").
+    local normalized="${iso_string/.[0-9]*Z/Z}"
+    normalized="${normalized/.[0-9]*+/+}"
+    if [[ "$normalized" =~ ^(.*)Z$ ]]; then
+        normalized="${BASH_REMATCH[1]}+0000"
+    elif [[ "$normalized" =~ ^(.*)([+-][0-9][0-9]):([0-9][0-9])$ ]]; then
         normalized="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
     fi
     # macOS (BSD date) - using -j prevents setting system time, -f specifies input format
     date -j -f "%Y-%m-%dT%H:%M:%S%z" "$normalized" "+%s" 2>/dev/null || \
-        # GNU date - accepts ISO 8601 with colon offset directly
+        # GNU date - accepts the original ISO 8601 string directly
         date -d "$iso_string" "+%s" 2>/dev/null || echo "0"
 }
 
