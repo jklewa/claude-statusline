@@ -454,6 +454,13 @@ DIR_NAME="${CURRENT_DIR##*/}"
 DIR_NAME=$(printf '%s' "$DIR_NAME" | tr -d '\000-\037\177')
 TRANSCRIPT_PATH=$(echo "$input" | jq -r '.transcript_path // ""')
 
+# Official Anthropic rate-limit data (Claude.ai Pro/Max only, present after the
+# first API response of the session — see code.claude.com/docs/en/statusline).
+# When present, it replaces the ccusage-derived 5-hour estimate that assumes a
+# hardcoded COST_LIMIT. Empty means fall back to the ccusage path.
+OFFICIAL_5H_PCT=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+OFFICIAL_5H_RESET=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+
 # Get 5-hour window data from ccusage (needed by 5-HOUR WINDOW, TIMER, and/or TOKEN_RATE sections)
 # Only fetch if at least one of these sections is enabled
 if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SHOW_TOKEN_RATE" = "true" ]; then
@@ -489,13 +496,26 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
             if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ]; then
 
                 # --- STAGE 2: COMPUTATION ---
-                # Calculate actual percentage
-                ACTUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($COST / $COST_LIMIT) * 100}")
+                # Prefer Anthropic's official 5-hour percentage. Back-compute an
+                # effective dollar limit so $X/$Y stays consistent with the bar.
+                if [ -n "$OFFICIAL_5H_PCT" ]; then
+                    ACTUAL_PCT=$OFFICIAL_5H_PCT
+                    if (( $(awk "BEGIN {print ($OFFICIAL_5H_PCT > 0 && $COST > 0)}") )); then
+                        EFFECTIVE_COST_LIMIT=$(awk "BEGIN {printf \"%.2f\", $COST / ($OFFICIAL_5H_PCT / 100)}")
+                    else
+                        EFFECTIVE_COST_LIMIT=$COST_LIMIT
+                    fi
+                else
+                    ACTUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($COST / $COST_LIMIT) * 100}")
+                    EFFECTIVE_COST_LIMIT=$COST_LIMIT
+                fi
 
                 # Calculate layer metrics using generic function
+                # Pass $COST as value so units match the dollar-denominated
+                # thresholds ($base × multiplier).
                 LAYER_RESULT=$(calculate_three_layer_metrics \
-                    "$ACTUAL_PCT" \
-                    "$COST_LIMIT" \
+                    "$COST" \
+                    "$EFFECTIVE_COST_LIMIT" \
                     "$LAYER1_THRESHOLD_MULT" \
                     "$LAYER2_THRESHOLD_MULT" \
                     "$LAYER3_THRESHOLD_MULT" \
@@ -506,9 +526,9 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
                 IFS='|' read -r LAYER_NUM VISUAL_PCT BAR_COLOR FILLED <<< "$LAYER_RESULT"
 
                 # Calculate layer thresholds and multipliers (needed for projection logic below)
-                LAYER1_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $COST_LIMIT * $LAYER1_THRESHOLD_MULT}")
-                LAYER2_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $COST_LIMIT * $LAYER2_THRESHOLD_MULT}")
-                LAYER3_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $COST_LIMIT * $LAYER3_THRESHOLD_MULT}")
+                LAYER1_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER1_THRESHOLD_MULT}")
+                LAYER2_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER2_THRESHOLD_MULT}")
+                LAYER3_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER3_THRESHOLD_MULT}")
                 LAYER1_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / $LAYER1_THRESHOLD}")
                 LAYER2_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / ($LAYER2_THRESHOLD - $LAYER1_THRESHOLD)}")
                 LAYER3_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / ($LAYER3_THRESHOLD - $LAYER2_THRESHOLD)}")
@@ -517,12 +537,11 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
                 PROJECTED_POS=-1
                 PROJECTED_BAR_COLOR="$LAYER1_COLOR"
                 if [ -n "$PROJECTED_COST" ] && [ "$PROJECTED_COST" != "0" ]; then
-                    PROJECTED_ACTUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($PROJECTED_COST / $COST_LIMIT) * 100}")
-
-                    # Determine projection color based on which layer it falls into
-                    if (( $(awk "BEGIN {print ($PROJECTED_ACTUAL_PCT <= $LAYER1_THRESHOLD)}") )); then
+                    # Compare projection in dollars against dollar-denominated
+                    # layer thresholds (matches the unit convention used for $COST above).
+                    if (( $(awk "BEGIN {print ($PROJECTED_COST <= $LAYER1_THRESHOLD)}") )); then
                         PROJECTED_BAR_COLOR="$LAYER1_COLOR"
-                    elif (( $(awk "BEGIN {print ($PROJECTED_ACTUAL_PCT <= $LAYER2_THRESHOLD)}") )); then
+                    elif (( $(awk "BEGIN {print ($PROJECTED_COST <= $LAYER2_THRESHOLD)}") )); then
                         PROJECTED_BAR_COLOR="$LAYER2_COLOR"
                     else
                         PROJECTED_BAR_COLOR="$LAYER3_COLOR"
@@ -530,11 +549,11 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
 
                     # Calculate visual position using CURRENT layer's multiplier (same scale as current bar)
                     if [ "$BAR_COLOR" = "$LAYER1_COLOR" ]; then
-                        PROJECTED_VISUAL_PCT=$(awk "BEGIN {printf \"%.2f\", $PROJECTED_ACTUAL_PCT * $LAYER1_MULTIPLIER}")
+                        PROJECTED_VISUAL_PCT=$(awk "BEGIN {printf \"%.2f\", $PROJECTED_COST * $LAYER1_MULTIPLIER}")
                     elif [ "$BAR_COLOR" = "$LAYER2_COLOR" ]; then
-                        PROJECTED_VISUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($PROJECTED_ACTUAL_PCT - $LAYER1_THRESHOLD) * $LAYER2_MULTIPLIER}")
+                        PROJECTED_VISUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($PROJECTED_COST - $LAYER1_THRESHOLD) * $LAYER2_MULTIPLIER}")
                     else
-                        PROJECTED_VISUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($PROJECTED_ACTUAL_PCT - $LAYER2_THRESHOLD) * $LAYER3_MULTIPLIER}")
+                        PROJECTED_VISUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($PROJECTED_COST - $LAYER2_THRESHOLD) * $LAYER3_MULTIPLIER}")
                     fi
 
                     if (( $(awk "BEGIN {print ($PROJECTED_VISUAL_PCT > 100)}") )); then
@@ -581,10 +600,10 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
                 PROGRESS_BAR="${PROGRESS_BAR}]"
 
                 # Calculate cost percentage
-                COST_PERCENTAGE=$(awk "BEGIN {printf \"%.0f\", ($COST / $COST_LIMIT) * 100}")
+                COST_PERCENTAGE=$(awk "BEGIN {printf \"%.0f\", $ACTUAL_PCT}")
 
                 # Format cost
-                COST_FMT=$(printf "\$%.0f/\$%d" $COST $COST_LIMIT)
+                COST_FMT=$(printf "\$%.0f/\$%.0f" $COST $EFFECTIVE_COST_LIMIT)
 
                 # Set progress bar color based on layer
                 PROGRESS_COLOR=$(get_color_code "$BAR_COLOR")
@@ -598,6 +617,17 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
                 REMAINING_MINS=$(echo "$BLOCK" | jq -r '.projection.remainingMinutes // 0')
                 END_TIME=$(echo "$BLOCK" | jq -r '.endTime // ""')
 
+                # Prefer Anthropic's official reset epoch when present; recompute
+                # remaining minutes from it so the countdown matches the bar.
+                END_TIME_TS=""
+                if [ -n "$OFFICIAL_5H_RESET" ]; then
+                    END_TIME_TS=$OFFICIAL_5H_RESET
+                    NOW_TS=$(date +%s)
+                    REMAINING_MINS=$(awk "BEGIN {r=int(($OFFICIAL_5H_RESET - $NOW_TS) / 60); print (r<0 ? 0 : r)}")
+                elif [ -n "$END_TIME" ]; then
+                    END_TIME_TS=$(iso_to_timestamp "$END_TIME")
+                fi
+
                 # Format countdown
                 HOURS=$((REMAINING_MINS / 60))
                 MINS=$((REMAINING_MINS % 60))
@@ -610,15 +640,10 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
                 CURRENT_TIME=$(date "+%-l:%M%p" 2>/dev/null || date "+%I:%M%p" | sed 's/^0//')
 
                 # Format reset time (simplified format: 10PM - no minutes) in local TZ.
-                # ccusage's endTime is UTC (e.g., "2026-05-07T07:00:00.000Z"); going
-                # via iso_to_timestamp + date -r keeps the timezone correct.
                 RESET_TIME=""
-                if [ -n "$END_TIME" ]; then
-                    END_TIME_TS=$(iso_to_timestamp "$END_TIME")
-                    if [ -n "$END_TIME_TS" ] && [ "$END_TIME_TS" != "0" ]; then
-                        RESET_TIME=$(date -r "$END_TIME_TS" "+%-l%p" 2>/dev/null || \
-                                     date -d "@$END_TIME_TS" "+%-l%p" 2>/dev/null || echo "")
-                    fi
+                if [ -n "$END_TIME_TS" ] && [ "$END_TIME_TS" != "0" ]; then
+                    RESET_TIME=$(date -r "$END_TIME_TS" "+%-l%p" 2>/dev/null || \
+                                 date -d "@$END_TIME_TS" "+%-l%p" 2>/dev/null || echo "")
                 fi
 
                 # Dim color for secondary info (50% opacity effect)
