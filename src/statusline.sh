@@ -62,9 +62,7 @@ validate_config() {
 
     # Validate limits
     check_required ".limits.weekly.$plan"
-    check_required ".limits.cost"
     check_required ".limits.context.default"
-    check_numeric_range ".limits.cost" 0 1000
     check_numeric_range ".limits.context.default" 0 2000
 
     # Validate multi-layer settings (5-hour window)
@@ -161,7 +159,6 @@ if [ -f "$CONFIG_FILE" ]; then
         (.limits.weekly.max20x | tostring),
         (.limits.context.default | tostring),
         (.limits.context | tojson),
-        (.limits.cost | tostring),
         (.limits.token | tostring),
         .paths.claude_projects,
         (.display.bar_length | tostring),
@@ -198,7 +195,6 @@ if [ -f "$CONFIG_FILE" ]; then
         .tracking.weekly_scheme,
         (.tracking.official_reset_date // ""),
         (.tracking.payment_cycle_start_date // ""),
-        (.tracking.weekly_baseline_percent | tostring),
         (.tracking.cache_duration_seconds | tostring),
         .colors.orange,
         .colors.bright_orange,
@@ -224,7 +220,6 @@ if [ -f "$CONFIG_FILE" ]; then
         read -r WEEKLY_LIMIT_MAX20X
         read -r CONTEXT_LIMIT_DEFAULT
         read -r CONTEXT_LIMIT_JSON
-        read -r COST_LIMIT
         read -r TOKEN_LIMIT
         read -r CLAUDE_PROJECTS_PATH
         read -r BAR_LENGTH
@@ -261,7 +256,6 @@ if [ -f "$CONFIG_FILE" ]; then
         read -r WEEKLY_SCHEME
         read -r OFFICIAL_RESET_DATE
         read -r PAYMENT_CYCLE_START_DATE
-        read -r WEEKLY_BASELINE_PCT
         read -r CACHE_DURATION
         read -r ORANGE_CODE
         read -r BRIGHT_ORANGE_CODE
@@ -287,7 +281,6 @@ else
     WEEKLY_LIMIT_MAX20X=850
     CONTEXT_LIMIT_DEFAULT=200
     CONTEXT_LIMIT_JSON='{"default":200,"claude-opus-4-6":1000,"claude-sonnet-4-6":1000}'
-    COST_LIMIT=140
     TOKEN_LIMIT=220000
     CLAUDE_PROJECTS_PATH="~/.claude/projects/"
     BAR_LENGTH=10
@@ -324,7 +317,6 @@ else
     SHOW_TOKEN_RATE="true"
     SHOW_SESSIONS="true"
     # Default tracking settings
-    WEEKLY_BASELINE_PCT=0
     CACHE_DURATION=300
     PAYMENT_CYCLE_START_DATE=""
 
@@ -408,9 +400,9 @@ esac
 # CACHE DEPENDENCY VALIDATION
 # ====================================================================================
 # Validate that cached data dependencies haven't changed
-# If weekly_limit or weekly_baseline_pct changed, invalidate all caches
+# If weekly_limit changes, invalidate all caches
 if type check_and_update_cache_deps &>/dev/null; then
-    check_and_update_cache_deps "$WEEKLY_LIMIT" "$WEEKLY_BASELINE_PCT"
+    check_and_update_cache_deps "$WEEKLY_LIMIT"
 fi
 
 # ====================================================================================
@@ -454,10 +446,11 @@ DIR_NAME="${CURRENT_DIR##*/}"
 DIR_NAME=$(printf '%s' "$DIR_NAME" | tr -d '\000-\037\177')
 TRANSCRIPT_PATH=$(echo "$input" | jq -r '.transcript_path // ""')
 
-# Official Anthropic rate-limit data (Claude.ai Pro/Max only, present after the
-# first API response of the session — see code.claude.com/docs/en/statusline).
-# When present, it replaces the ccusage-derived 5-hour estimate that assumes a
-# hardcoded COST_LIMIT. Empty means fall back to the ccusage path.
+# Official Anthropic rate-limit data (Claude.ai Pro/Max only, populated after
+# the first API response of the session — see
+# code.claude.com/docs/en/statusline). The 5-hour and weekly bars only render
+# when their respective field is present. Each window may be independently
+# absent; downstream code must handle empty values.
 OFFICIAL_5H_PCT=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
 OFFICIAL_5H_RESET=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
 OFFICIAL_7D_PCT=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
@@ -495,50 +488,57 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
             # ========================================================================
             # 5-HOUR WINDOW SECTION (conditional display)
             # ========================================================================
-            if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ]; then
+            # Requires the official rate-limit data; hidden on cold start until
+            # the first API response of the session populates rate_limits.
+            if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] && [ -n "$OFFICIAL_5H_PCT" ]; then
 
                 # --- STAGE 2: COMPUTATION ---
-                # Prefer Anthropic's official 5-hour percentage. Back-compute an
-                # effective dollar limit so $X/$Y stays consistent with the bar.
-                if [ -n "$OFFICIAL_5H_PCT" ]; then
-                    ACTUAL_PCT=$OFFICIAL_5H_PCT
-                    if (( $(awk "BEGIN {print ($OFFICIAL_5H_PCT > 0 && $COST > 0)}") )); then
-                        EFFECTIVE_COST_LIMIT=$(awk "BEGIN {printf \"%.2f\", $COST / ($OFFICIAL_5H_PCT / 100)}")
-                    else
-                        EFFECTIVE_COST_LIMIT=$COST_LIMIT
-                    fi
-                else
-                    ACTUAL_PCT=$(awk "BEGIN {printf \"%.2f\", ($COST / $COST_LIMIT) * 100}")
-                    EFFECTIVE_COST_LIMIT=$COST_LIMIT
-                fi
-
-                # Calculate layer metrics using generic function
-                # Pass $COST as value so units match the dollar-denominated
-                # thresholds ($base × multiplier).
-                LAYER_RESULT=$(calculate_three_layer_metrics \
-                    "$COST" \
-                    "$EFFECTIVE_COST_LIMIT" \
-                    "$LAYER1_THRESHOLD_MULT" \
-                    "$LAYER2_THRESHOLD_MULT" \
-                    "$LAYER3_THRESHOLD_MULT" \
-                    "$LAYER1_COLOR" \
-                    "$LAYER2_COLOR" \
-                    "$LAYER3_COLOR" \
-                    "$BAR_LENGTH")
-                IFS='|' read -r LAYER_NUM VISUAL_PCT BAR_COLOR FILLED <<< "$LAYER_RESULT"
-
-                # Calculate layer thresholds and multipliers (needed for projection logic below)
-                LAYER1_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER1_THRESHOLD_MULT}")
-                LAYER2_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER2_THRESHOLD_MULT}")
-                LAYER3_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER3_THRESHOLD_MULT}")
-                LAYER1_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / $LAYER1_THRESHOLD}")
-                LAYER2_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / ($LAYER2_THRESHOLD - $LAYER1_THRESHOLD)}")
-                LAYER3_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / ($LAYER3_THRESHOLD - $LAYER2_THRESHOLD)}")
-
-                # Calculate projected position using CURRENT layer's multiplier for consistent scale
+                # Percentage comes from Anthropic; back-compute the displayed
+                # dollar limit from $COST so $X/$Y matches the bar.
+                ACTUAL_PCT=$OFFICIAL_5H_PCT
                 PROJECTED_POS=-1
                 PROJECTED_BAR_COLOR="$LAYER1_COLOR"
-                if [ -n "$PROJECTED_COST" ] && [ "$PROJECTED_COST" != "0" ]; then
+
+                if (( $(awk "BEGIN {print ($OFFICIAL_5H_PCT > 0 && $COST > 0)}") )); then
+                    EFFECTIVE_COST_LIMIT=$(awk "BEGIN {printf \"%.2f\", $COST / ($OFFICIAL_5H_PCT / 100)}")
+                else
+                    # 0% or no cost yet — derived limit is undefined. Render an
+                    # empty bar and skip layer math + projection.
+                    EFFECTIVE_COST_LIMIT=0
+                    LAYER_NUM=1
+                    VISUAL_PCT=0
+                    BAR_COLOR=$LAYER1_COLOR
+                    FILLED=0
+                fi
+
+                if (( $(awk "BEGIN {print ($EFFECTIVE_COST_LIMIT > 0)}") )); then
+                    # Calculate layer metrics using generic function.
+                    # Pass $COST as value so units match the dollar-denominated
+                    # thresholds ($base × multiplier).
+                    LAYER_RESULT=$(calculate_three_layer_metrics \
+                        "$COST" \
+                        "$EFFECTIVE_COST_LIMIT" \
+                        "$LAYER1_THRESHOLD_MULT" \
+                        "$LAYER2_THRESHOLD_MULT" \
+                        "$LAYER3_THRESHOLD_MULT" \
+                        "$LAYER1_COLOR" \
+                        "$LAYER2_COLOR" \
+                        "$LAYER3_COLOR" \
+                        "$BAR_LENGTH")
+                    IFS='|' read -r LAYER_NUM VISUAL_PCT BAR_COLOR FILLED <<< "$LAYER_RESULT"
+
+                    # Calculate layer thresholds and multipliers (needed for projection logic below)
+                    LAYER1_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER1_THRESHOLD_MULT}")
+                    LAYER2_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER2_THRESHOLD_MULT}")
+                    LAYER3_THRESHOLD=$(awk "BEGIN {printf \"%.2f\", $EFFECTIVE_COST_LIMIT * $LAYER3_THRESHOLD_MULT}")
+                    LAYER1_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / $LAYER1_THRESHOLD}")
+                    LAYER2_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / ($LAYER2_THRESHOLD - $LAYER1_THRESHOLD)}")
+                    LAYER3_MULTIPLIER=$(awk "BEGIN {printf \"%.2f\", 100 / ($LAYER3_THRESHOLD - $LAYER2_THRESHOLD)}")
+                fi
+
+                # Calculate projected position using CURRENT layer's multiplier for consistent scale
+                if [ -n "$PROJECTED_COST" ] && [ "$PROJECTED_COST" != "0" ] && \
+                   (( $(awk "BEGIN {print ($EFFECTIVE_COST_LIMIT > 0)}") )); then
                     # Compare projection in dollars against dollar-denominated
                     # layer thresholds (matches the unit convention used for $COST above).
                     if (( $(awk "BEGIN {print ($PROJECTED_COST <= $LAYER1_THRESHOLD)}") )); then
@@ -604,8 +604,12 @@ if [ "$SHOW_FIVE_HOUR_WINDOW" = "true" ] || [ "$SHOW_TIMER" = "true" ] || [ "$SH
                 # Calculate cost percentage
                 COST_PERCENTAGE=$(awk "BEGIN {printf \"%.0f\", $ACTUAL_PCT}")
 
-                # Format cost
-                COST_FMT=$(printf "\$%.0f/\$%.0f" $COST $EFFECTIVE_COST_LIMIT)
+                # Format cost — omit /$Y when the derived limit is undefined
+                if (( $(awk "BEGIN {print ($EFFECTIVE_COST_LIMIT > 0)}") )); then
+                    COST_FMT=$(printf "\$%.0f/\$%.0f" $COST $EFFECTIVE_COST_LIMIT)
+                else
+                    COST_FMT=$(printf "\$%.0f" $COST)
+                fi
 
                 # Set progress bar color based on layer
                 PROGRESS_COLOR=$(get_color_code "$BAR_COLOR")
@@ -793,39 +797,18 @@ if [ "$SHOW_CONTEXT" = "true" ] && [ -f "$TRANSCRIPT_PATH" ]; then
 fi
 
 # ====================================================================================
-# SHARED WEEKLY/DAILY SECTION DATA (integrated weekly tracker)
+# WEEKLY PERCENTAGE (from official Anthropic rate_limits.seven_day)
 # ====================================================================================
-if [ "$SHOW_WEEKLY" = "true" ] || [ "$SHOW_DAILY" = "true" ]; then
-    # Get weekly usage based on configured tracking scheme (shared data source)
-    if [ "$WEEKLY_SCHEME" = "ccusage_r" ] && [ -n "$OFFICIAL_RESET_DATE" ] && type get_official_weekly_cost &>/dev/null; then
-        # Use ccusage costs filtered by official Anthropic reset schedule
-        # Convert ISO timestamp to Unix format
-        RESET_TIMESTAMP=$(iso_to_timestamp "$OFFICIAL_RESET_DATE")
-        WEEK_COST_RAW=$(get_official_weekly_cost "$RESET_TIMESTAMP" "$CACHE_DURATION")
-    else
-        # Use ccusage with ISO weeks (default)
-        WEEKLY_DATA=$(cd ~ && npx --yes "ccusage@${CCUSAGE_VERSION}" weekly --json --offline 2>/dev/null | awk '/^{/,0')
-        WEEK_COST_RAW=$(echo "$WEEKLY_DATA" | jq -r '.weekly[-1].totalCost // 0' 2>/dev/null) || WEEK_COST_RAW=0
-    fi
+# Only populated when the official field is present; weekly section stays
+# hidden on cold start (before the first API response). RESET_TIMESTAMP is
+# still derived below for the daily tracker and recommend mode, which need
+# cycle-aware ccusage history that the official field doesn't expose.
+if [ "$SHOW_WEEKLY" = "true" ] && [ -n "$OFFICIAL_7D_PCT" ]; then
+    WEEKLY_PCT=$(awk "BEGIN {printf \"%.0f\", $OFFICIAL_7D_PCT}")
+fi
 
-    # Save raw cost for recommendation calculation (without baseline)
-    WEEK_COST=$WEEK_COST_RAW
-
-    # Apply baseline offset to account for untracked costs (for display only)
-    if [ "$(awk "BEGIN {print ($WEEKLY_BASELINE_PCT != 0)}")" = "1" ]; then
-        BASELINE_COST=$(awk "BEGIN {printf \"%.2f\", ($WEEKLY_LIMIT * $WEEKLY_BASELINE_PCT) / 100}")
-        WEEK_COST=$(awk "BEGIN {printf \"%.2f\", $WEEK_COST + $BASELINE_COST}")
-    fi
-
-    WEEKLY_PCT=$(awk "BEGIN {printf \"%.0f\", ($WEEK_COST / $WEEKLY_LIMIT) * 100}")
-
-    # Prefer Anthropic's official 7-day percentage when present. Overrides the
-    # ccusage+baseline estimate so the displayed % matches the console exactly.
-    # Recommend mode keeps the ccusage path below since it needs cycle-aware
-    # historical cost data the official field doesn't expose.
-    if [ -n "$OFFICIAL_7D_PCT" ]; then
-        WEEKLY_PCT=$(awk "BEGIN {printf \"%.0f\", $OFFICIAL_7D_PCT}")
-    fi
+if [ -n "$OFFICIAL_RESET_DATE" ] && type iso_to_timestamp &>/dev/null; then
+    RESET_TIMESTAMP=$(iso_to_timestamp "$OFFICIAL_RESET_DATE")
 fi
 
 # ====================================================================================

@@ -17,7 +17,7 @@
 #
 # Arguments:
 #   value          - Current value to evaluate (e.g., ACTUAL_PCT, CONTEXT_TOKENS)
-#   base_threshold - Base threshold value (e.g., COST_LIMIT, CONTEXT_LIMIT)
+#   base_threshold - Base threshold value (e.g., EFFECTIVE_COST_LIMIT, CONTEXT_LIMIT)
 #   layer1_mult    - Layer 1 threshold multiplier
 #   layer2_mult    - Layer 2 threshold multiplier
 #   layer3_mult    - Layer 3 threshold multiplier

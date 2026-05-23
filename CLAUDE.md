@@ -31,8 +31,8 @@ Real-time usage tracking statusline for Claude Code using shim architecture.
 
 4. **Examples:**
    ```bash
-   # 5-hour window: base = COST_LIMIT
-   LAYER1_THRESHOLD=$(awk "BEGIN {print $COST_LIMIT * $LAYER1_THRESHOLD_MULT}")
+   # 5-hour window: base = EFFECTIVE_COST_LIMIT (back-computed from $COST / official %)
+   LAYER1_THRESHOLD=$(awk "BEGIN {print $EFFECTIVE_COST_LIMIT * $LAYER1_THRESHOLD_MULT}")
 
    # Daily static: base = weekly_limit / 7
    DAILY_BASE=$(awk "BEGIN {print ($WEEKLY_LIMIT / 7.0) / $WEEKLY_LIMIT * 100}")
@@ -56,9 +56,9 @@ Real-time usage tracking statusline for Claude Code using shim architecture.
 ~/Projects/cc-statusline/
 ├── src/
 │   ├── statusline.sh              # Main implementation
-│   └── statusline-utils.sh        # Daily/weekly tracking utilities
-├── tools/
-│   └── calibrate_weekly_usage.sh  # Weekly usage calibration tool
+│   ├── statusline-utils.sh        # Daily/weekly/monthly tracking utilities
+│   ├── statusline-layers.sh       # Generic 2-/3-layer metric calculations
+│   └── statusline-cache.sh        # Unified cache deps + invalidation
 ├── config/
 │   ├── config.json                # User config (gitignored)
 │   └── config.example.json        # Template with defaults
@@ -85,8 +85,9 @@ Real-time usage tracking statusline for Claude Code using shim architecture.
 
 ### Key Implementations
 - **Shim architecture** - Stable interface (`~/.claude/statusline.sh`) delegates to implementation
+- **Official rate-limit integration** - 5-hour and weekly percentages come from stdin `.rate_limits.{five_hour,seven_day}.used_percentage` (Claude.ai Pro/Max, populated after first API response). Sections are hidden when the field is absent (cold start / API-key users). The 5-hour displayed dollar limit is back-computed from `$COST / (official_pct / 100)`.
 - **Multi-layer progress bars** - Auto-scaled visualization (different multipliers per threshold)
-- **ccusage_r scheme** - Matches Anthropic console % (filters by official reset schedule)
+- **ccusage_r scheme** - Used by daily tracker and recommend mode to filter cost by Anthropic's reset schedule
 - **Daily cost tracking** - `get_daily_cost()` with caching, aligned to weekly reset time
 - **Daily projection** - Uses 5-hour window: `daily_cost - window_cost + projected_window_cost`
 - **Daily recommendation** - Stable budget recommendation, updates only at daily cycle reset
@@ -101,7 +102,7 @@ Real-time usage tracking statusline for Claude Code using shim architecture.
 **Behavior**:
 - **Stable throughout each daily cycle** - Only updates at daily reset (e.g., 3pm)
 - **Cycle-aligned** - Uses usage up to current daily cycle start, not current time
-- **Baseline-independent** - Uses raw weekly cost (excludes baseline) for full $850 availability
+- **Sources cost from ccusage** - The official `rate_limits.seven_day` field gives a current % but not cycle-aware historical cost, so recommend mode uses ccusage block data directly
 
 **Example scenarios**:
 
@@ -131,61 +132,13 @@ Real-time usage tracking statusline for Claude Code using shim architecture.
 
 **Key settings**:
 - `user.plan` - pro/max5x/max20x
-- `limits.weekly`, `limits.cost` - Usage limits
+- `limits.weekly` - Per-plan weekly cost, used by daily tracker and recommend mode (the displayed weekly % comes from `rate_limits.seven_day`)
 - `limits.context` - Per-model context limits (auto-detected, e.g., `default: 200`, `claude-opus-4-6: 1000`)
-- `multi_layer` - 3-layer thresholds + colors for weekly/5-hour window
-- `daily_layer` - 2-layer thresholds + colors (14.29% normal, 21.44% exceeding)
+- `multi_layer` - 3-layer thresholds + colors for the 5-hour window
+- `daily_layer` - 2-layer thresholds + colors (normal/exceeding)
 - `sections.show_*` - Toggle individual sections
-- `tracking.weekly_scheme` - "ccusage" (ISO week) or "ccusage_r" (official reset)
-- `tracking.official_reset_date` - Required for ccusage_r and daily tracking
-
-## Tools
-
-### Weekly Usage Calibrator
-
-**Path**: `tools/calibrate_weekly_usage.sh`
-
-Aligns statusline weekly tracking with Anthropic's official usage percentage.
-
-**Purpose**: Compensates for untracked costs:
-- Deleted/compacted transcripts (clear/compact commands)
-- Extended context usage (Sonnet 4 [1m] pricing differences)
-- Any costs not captured by ccusage
-
-**Requirements**:
-- `tracking.weekly_scheme` must be set to `"ccusage_r"`
-- `tracking.official_reset_date` must be configured
-
-**Usage**:
-
-**Option 1: Slash Command (Recommended)**
-```bash
-# Global slash command available in all Claude Code sessions
-/calibrate_weekly_usage_baseline 18.5
-```
-
-**Option 2: Direct Script**
-```bash
-# Run script directly from project root
-tools/calibrate_weekly_usage.sh 18.5
-
-# Example output:
-#   Official Usage (Anthropic): 18.5%
-#   Tracked Usage (ccusage_r):  12.3%
-#   Gap (untracked costs):      6.2%
-#
-#   Baseline updated: 10% → 6.2%
-#   Statusline will now show: 18.5%
-```
-
-**When to calibrate**:
-- After weekly reset (to zero out baseline if needed)
-- When you notice drift between statusline and console
-- After significant transcript cleanup operations
-- Weekly as a maintenance routine
-
-**Slash Command Setup**:
-The calibrator is available as a global slash command in `~/.claude/commands/calibrate_weekly_usage_baseline.md`. This makes it accessible from any Claude Code session without needing to navigate to the project directory.
+- `tracking.weekly_scheme` - "ccusage" (ISO week) or "ccusage_r" (official reset) — only affects recommend mode's cost slicing
+- `tracking.official_reset_date` - Required for ccusage_r, daily tracking, and recommend mode
 
 ## Development
 
@@ -194,12 +147,12 @@ The calibrator is available as a global slash command in `~/.claude/commands/cal
 # Test manually
 echo '{"workspace":{"current_dir":"~"},"transcript_path":""}' | src/statusline.sh
 
+# Test with official rate_limits (Claude.ai Pro/Max stdin shape)
+echo '{"workspace":{"current_dir":"~"},"transcript_path":"","rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":'$(($(date +%s)+7200))'},"seven_day":{"used_percentage":28,"resets_at":'$(($(date +%s)+86400))'}}}' | src/statusline.sh
+
 # Test daily functions
 source src/statusline-utils.sh
 get_daily_cost "2025-10-08T15:00:00-07:00"
-
-# Test calibrator
-tools/calibrate_weekly_usage.sh 15.0
 ```
 
 ### Path Conventions
@@ -224,14 +177,22 @@ tools/calibrate_weekly_usage.sh 15.0
 
 ### Recent Updates
 
+**v3.0** (2026-05-23) - Official `rate_limits` integration
+- 5-hour and weekly percentages now come from stdin `.rate_limits.{five_hour,seven_day}.used_percentage` (Claude.ai Pro/Max, populated after first API response)
+- 5-hour displayed dollar limit is back-computed from `$COST / (official_pct / 100)` so `$X/$Y` always matches the percentage
+- Timer prefers official `resets_at` epoch over ccusage's `endTime`
+- Removed `limits.cost` config (no longer a hardcoded 5-hour estimate)
+- Removed `tracking.weekly_baseline_percent` and the calibrator tool (`tools/calibrate_weekly_usage.sh`) — calibration is now done by Anthropic
+- Fixed pre-existing unit bug in `calculate_three_layer_metrics` (compare $COST to dollar thresholds, not pct to dollar thresholds)
+- 5-hour and weekly sections hidden on cold start until rate_limits arrives
+
 **v2.3** (2025-10-08) - Daily Recommendation Fix
 - Fixed recommend calculation to use correct cycle-aligned logic
 - Formula: `(weekly_limit - usage_from_weekly_start_to_daily_cycle_start) / cycles_left`
 - Stable recommendations that update only at daily reset (3pm)
-- Baseline excluded from recommendation (uses raw weekly cost)
 - Fixed rounding precision: calculate dollar amount from exact division
 
-**v2.2** (2025-10-06) - Weekly Usage Calibration Tool
+**v2.2** (2025-10-06) - Weekly Usage Calibration Tool [retired in v3.0]
 - `tools/calibrate_weekly_usage.sh` - Aligns tracking with official usage
 - Compensates for untracked costs (deleted transcripts, extended context)
 - Interactive baseline adjustment with safety validations
@@ -252,4 +213,4 @@ tools/calibrate_weekly_usage.sh 15.0
 
 ---
 
-**Last Updated**: 2025-10-08
+**Last Updated**: 2026-05-23

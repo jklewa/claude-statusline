@@ -15,7 +15,7 @@ A custom statusline for [Claude Code 2.x](https://claude.com/claude-code) that p
 - **Active sessions** - Concurrent Claude Code project counter
 
 ### Advanced Features
-- **Intelligent weekly calibration** - Compensates for untracked costs (deleted transcripts, extended context)
+- **Official rate-limit integration** - 5-hour and weekly percentages come from Anthropic's `rate_limits` field in stdin (Claude.ai Pro/Max), so they always match the console without calibration
 - **Multi-layer progression system** - Config-driven thresholds with auto-scaled visualization per layer
 - **Weekly display modes** - Choose between usage %, available %, or recommended daily % to finish allocated budget
 - **Daily projection integration** - Combines 5-hour window projection with daily tracking for accurate end-of-day estimates
@@ -41,18 +41,18 @@ A custom statusline for [Claude Code 2.x](https://claude.com/claude-code) that p
 
 ### Full Display (all sections enabled)
 ```
-.claude | 45k/168k [████████░░] | $32/$140 [█████░░│░░] 23% | daily [██░│░░░░░░] 6/12% $21/$42 | total $324 | 5:45PM/10PM (3h 42m) | 928/min | ×2
+.claude | 45k/168k [████████░░] | $32/$139 [█████░░│░░] 23% | daily [██░│░░░░░░] 6/12% $21/$42 | total $324 | 5:45PM/10PM (3h 42m) | 928/min | ×2
 ```
 
 ### Minimal Display (essential sections only)
 ```
-.claude | $32/$140 [█████░░░░░] 23% | weekly 18% | 3h 42m
+.claude | $32/$139 [█████░░░░░] 23% | weekly 18% | 3h 42m
 ```
 
 **Section breakdown:**
 - `.claude` - Current project directory (bright orange)
 - `45k/168k [████████░░]` - Context: cached+fresh tokens with 3-layer progress bar
-- `$32/$140 [█████░░│░░] 23%` - 5-hour window: cost with projection separator (│) and percentage
+- `$32/$139 [█████░░│░░] 23%` - 5-hour window: $X / back-computed $Y (from Anthropic's official %) with projection separator (│)
 - `daily [██░│░░░░░░] 6/12% $21/$42` - Daily: actual/recommend % and cost (combined mode)
 - `total $324` - Monthly total cost from billing cycle start
 - `5:45PM/10PM (3h 42m)` - Current time / Reset time (countdown)
@@ -123,9 +123,7 @@ Edit `~/Projects/cc-statusline/config/config.json` to customize your statusline:
 
 ### Essential Settings
 - **`user.plan`** - Set to `"pro"`, `"max5x"`, or `"max20x"` (your subscription tier)
-- **`limits.weekly`** - Weekly cost limits per plan (pro: $300, max5x: $500, max20x: $850)
-  - Note: `pro` and `max5x` limits are estimated - only `max20x` has been verified
-- **`limits.cost`** - 5-hour window cost limit (default: $140)
+- **`limits.weekly`** - Weekly cost limits per plan, used by the daily tracker and recommend mode (pro: $300, max5x: $500, max20x: $850). The displayed weekly **percentage** comes from Anthropic's official `rate_limits.seven_day`, not this value.
 - **`limits.context`** - Context window limit in thousands (default: 168k)
 
 ### Display Configuration
@@ -134,7 +132,7 @@ Edit `~/Projects/cc-statusline/config/config.json` to customize your statusline:
 
 ### Multi-Layer Systems
 - **`multi_layer.*`** - 5-hour window layers (3-layer system)
-  - `layer1/2/3.threshold_multiplier` - Thresholds relative to cost_limit (default: 0.3/0.5/1.0)
+  - `layer1/2/3.threshold_multiplier` - Thresholds relative to the effective 5-hour limit (back-computed from official `rate_limits.five_hour.used_percentage` and current `$COST`). Default: 0.3/0.5/1.0.
   - `layer1/2/3.color` - Color names for each layer (default: green/orange/red)
 
 - **`daily_layer.*`** - Daily usage layers (2-layer system)
@@ -165,7 +163,7 @@ Edit `~/Projects/cc-statusline/config/config.json` to customize your statusline:
   - `"recommend"` - Shows recommended daily % to finish allocated budget (label: "recom")
     - Formula: `(weekly_limit - usage_from_weekly_start_to_daily_cycle_start) / cycles_left`
     - Stable throughout each daily cycle (e.g., 3pm→3pm), updates only at daily reset
-    - Uses raw weekly cost (excludes baseline) for full limit availability
+    - Uses raw weekly cost from ccusage (cycle-aware historical data the official `rate_limits.seven_day` field doesn't expose)
     - Combines with daily tracker to show: `daily [bar] actual/recommend% $actual/$recommend`
     - Example: Day 1 at 3pm: $850 / 7 days = $121/day (14%)
 
@@ -182,91 +180,25 @@ Edit `~/Projects/cc-statusline/config/config.json` to customize your statusline:
   - Format: `"2025-10-01T15:00:00-07:00"` (date is cycle start, time copied from official_reset_date)
   - Required for: monthly cost tracking (show_monthly)
 
-- **`tracking.weekly_baseline_percent`** - Compensation for untracked costs (default: 0)
-  - Adds fixed % to weekly usage to account for deleted transcripts
-  - Use calibration tool to calculate: `tools/calibrate_weekly_usage.sh <official_%>`
-
 - **`tracking.cache_duration_seconds`** - Cache TTL in seconds (default: 300 = 5 minutes)
-  - Controls how often ccusage_r queries run
+  - Controls how often per-cycle ccusage queries (daily/recommend/monthly) run
   - Lower values = more responsive but more API calls
 
 See `config/config.example.json` for all available options with detailed comments.
 
-## Handling Untracked Costs (Deleted Transcripts)
+## Weekly and 5-Hour Percentages
 
-**Problem**: When you use Claude Code's `clear` or `compact` commands to delete transcripts, the usage data is permanently removed from ccusage tracking (which reads from transcript files). This creates a discrepancy:
-- **Anthropic Console**: Still shows full usage (server-side records)
-- **Statusline**: Shows lower percentage (missing deleted transcript costs)
+The displayed 5-hour and weekly percentages come from Anthropic's `rate_limits` field, which Claude Code passes to the statusline on stdin for Claude.ai Pro/Max sessions (populated after the first API response). They always match the console exactly — no calibration needed.
 
-Additionally, extended context usage (e.g., Sonnet 4 [1m]) may have pricing differences that create tracking gaps.
+**Cold start:** Before the first API response of a session, `rate_limits` is absent and the 5-hour and weekly sections are hidden. They appear automatically once data arrives.
 
-**Solution**: Use the built-in calibration tool to automatically calculate and apply the baseline offset.
+**Other plans (API key, Bedrock, etc.):** The `rate_limits` field is not provided, so those two sections remain hidden. The daily, monthly, context, timer, and token-rate sections still work via ccusage.
 
-### Automated Calibration (Recommended)
+## Daily Tracker Setup (Optional)
 
-**Option 1: Slash Command** (Available in any Claude Code session)
-```bash
-# From any project
-/calibrate_weekly_usage_baseline 18.5
-```
+The daily tracker is independent from the official `rate_limits` and needs `tracking.official_reset_date` to align its 24-hour cycle with your Anthropic reset schedule.
 
-**Option 2: Direct Script**
-```bash
-# From statusline project directory
-cd ~/Projects/cc-statusline
-tools/calibrate_weekly_usage.sh 18.5
-```
-
-**What it does:**
-1. Reads your current tracked usage from ccusage_r
-2. Calculates the gap: `official_% - tracked_%`
-3. Updates `tracking.weekly_baseline_percent` in config
-4. Clears cache to force refresh
-
-**When to calibrate:**
-- After weekly reset (to zero out baseline if needed)
-- When you notice drift between statusline and console
-- After significant transcript cleanup operations
-- Weekly as a maintenance routine
-
-**Prerequisites:**
-- `tracking.weekly_scheme` must be `"ccusage_r"`
-- `tracking.official_reset_date` must be configured
-
-### Manual Calibration (Alternative)
-
-If you prefer manual configuration:
-
-1. **Check Anthropic console** for current weekly usage %
-2. **Check statusline** for current weekly usage %
-3. **Calculate gap**: `console_% - statusline_%`
-4. **Update config**:
-   ```json
-   {
-     "tracking": {
-       "weekly_baseline_percent": 5
-     }
-   }
-   ```
-
-**Example:**
-- Console shows: **18.5%**
-- Statusline shows: **12.3%**
-- Gap: `18.5% - 12.3% = 6.2%`
-- Set: `"weekly_baseline_percent": 6.2`
-- Result: Statusline now shows **18.5%** ✓
-
-**Note**: The baseline applies to **all tracking schemes** (both `ccusage` and `ccusage_r`). If you don't delete transcripts, keep this at `0` (default).
-
-## Daily and Weekly Usage Tracking Calibration
-
-**Note**: By default, weekly tracking uses ISO weeks (Monday-Sunday) via ccusage. This may show different percentages than the Anthropic console, which uses custom reset cycles (e.g., Wednesday 3pm → Wednesday 3pm).
-
-### Configure Official Reset Schedule (Enables Daily Tracker)
-
-Setting the official reset date **enables two features**:
-1. **Daily usage tracking** - 24-hour cycle tracker with end-of-day projection
-2. **Weekly tracking calibration** - Match Anthropic console percentage exactly (when using `ccusage_r` scheme)
+### Configure Official Reset Schedule
 
 **Setup steps:**
 
@@ -291,9 +223,9 @@ Setting the official reset date **enables two features**:
 
 **Results**:
 - Daily tracker will appear in your statusline showing today's usage as % of weekly limit
-- Weekly percentage will match Anthropic console (if using `ccusage_r` scheme)
+- Recommend mode (`weekly_display_mode: recommend`) becomes available
 
-**Note**: Daily tracking works with either `ccusage` or `ccusage_r` weekly schemes - only `official_reset_date` is required.
+**Note**: Daily tracking works with either `ccusage` or `ccusage_r` weekly schemes — only `official_reset_date` is required.
 
 ## Troubleshooting
 
@@ -359,7 +291,7 @@ The statusline follows a clean data flow architecture:
 Smart caching system with multiple invalidation triggers:
 - **Period change** - Daily/weekly/monthly boundary crossed
 - **Time-based** - Cache older than configured duration (default: 5 min)
-- **Dependency change** - Config values affecting calculations changed (weekly_limit, baseline)
+- **Dependency change** - Config values affecting calculations changed (e.g., `weekly_limit`)
 - **Data corruption** - Cached value fails validation
 
 All cache writes are atomic (tmp → mv) for crash safety.
@@ -383,8 +315,6 @@ All cache writes are atomic (tmp → mv) for crash safety.
 │   ├── .weekly_recommend_cache   # Recommend value cache (cycle-aware)
 │   ├── .cache_deps               # Config dependency tracking (invalidation)
 │   └── statusline-data.json      # Legacy cache (deprecated)
-├── tools/                         # Utilities
-│   └── calibrate_weekly_usage.sh # Weekly usage calibration tool
 ├── example/                       # Example screenshots
 │   └── statusline.png            # Visual reference
 ├── install.sh                     # Automated installer
@@ -394,9 +324,7 @@ All cache writes are atomic (tmp → mv) for crash safety.
 └── .gitignore
 
 ~/.claude/
-├── statusline.sh                 # 2-line shim (delegates to src/statusline.sh)
-└── commands/                      # Slash commands (optional)
-    └── calibrate_weekly_usage_baseline.md  # Calibration slash command
+└── statusline.sh                 # 2-line shim (delegates to src/statusline.sh)
 ```
 
 **Key components:**
@@ -450,15 +378,11 @@ echo '{"workspace":{"current_dir":"~"},"transcript_path":""}' | src/statusline.s
 # Test utility functions
 source src/statusline-utils.sh
 get_daily_cost "2025-10-08T15:00:00-07:00"
-
-# Test calibration tool
-tools/calibrate_weekly_usage.sh 18.5
 ```
 
 **File organization:**
 - `src/statusline.sh` - Main script (keep clean, delegate to utilities)
 - `src/statusline-*.sh` - Utility modules (self-contained, reusable functions)
-- `tools/` - Standalone tools (calibration, maintenance)
 - `config/` - User config (gitignored) + example template
 
 ### Contributing

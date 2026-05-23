@@ -17,9 +17,8 @@
       "claude-sonnet-4-6": 1000,
       "comment": "Context limits per model in thousands (k). Auto-detected from transcript. Falls back to 'default' for unknown models. Opus 4.6 and Sonnet 4.6 have native 1M context; all other models default to 200k."
     },
-    "cost": 140,
     "token": 220000,
-    "comment": "Context limits (per-model, in thousands), cost limit per 5-hour session, token limit for tracking"
+    "comment": "Context limits (per-model, in thousands) and token limit for tracking. 5-hour and weekly percentages come from Anthropic's official rate_limits in stdin."
   },
   "paths": {
     "claude_projects": "~/.claude/projects/",
@@ -115,8 +114,7 @@
     "weekly_scheme": "ccusage",
     "official_reset_date": "",
     "payment_cycle_start_date": "",
-    "weekly_baseline_percent": 0,
     "cache_duration_seconds": 300,
-    "comment": "Weekly tracking: 'ccusage' (default, uses ISO weeks) or 'ccusage_r' (optional, matches Anthropic console schedule). To use ccusage_r: set official_reset_date from your console's 'Resets [date/time]' (format: 2025-10-08T15:00:00-07:00 for 'Oct 8, 3pm Vancouver'). payment_cycle_start_date: optional, set to track monthly cost from your billing cycle start (format: 2025-10-01T15:00:00-07:00 - date is cycle start, time is copied from official_reset_date for consistency). weekly_baseline_percent compensates for untracked costs from deleted transcripts (clear/compact commands) - set to the percentage gap between your Anthropic console and statusline (e.g., console 15% vs statusline 10% → set to 5). cache_duration_seconds controls how long ccusage_r results are cached (default: 300 = 5 minutes). See README for setup guide."
+    "comment": "Daily/recommend tracking uses ccusage to slice cost into per-cycle buckets. weekly_scheme: 'ccusage' (ISO weeks) or 'ccusage_r' (matches Anthropic console schedule). official_reset_date is required for 'ccusage_r' and for daily-cycle alignment (format: 2025-10-08T15:00:00-07:00 for 'Oct 8, 3pm Vancouver'). payment_cycle_start_date: optional, used by monthly cost tracking. cache_duration_seconds caches per-cycle ccusage queries (default 300). The 5-hour and weekly percentages come from the official rate_limits field in stdin; no calibration is needed."
   }
 }

@@ -21,19 +21,19 @@
 #    Format: timestamp|period_start|period_end|daily_cost
 #    Purpose: Cache daily cost calculation
 #    Invalidation: Period change OR time-based (cache_duration)
-#    Dependencies: weekly_limit, weekly_baseline_pct
+#    Dependencies: weekly_limit
 #
 # 2. data/.official_weekly_cache
 #    Format: timestamp|period_start|period_end|weekly_cost
 #    Purpose: Cache weekly cost calculation (ccusage_r scheme)
 #    Invalidation: Period change OR time-based (cache_duration)
-#    Dependencies: weekly_limit, weekly_baseline_pct
+#    Dependencies: weekly_limit
 #
 # 3. data/.weekly_recommend_cache
 #    Format: timestamp|cycle_start|recommend_value
 #    Purpose: Cache recommended daily usage calculation
 #    Invalidation: Cycle change OR time-based (cache_duration)
-#    Dependencies: weekly_limit, weekly_baseline_pct, daily_cost
+#    Dependencies: weekly_limit, daily_cost
 #
 # 4. data/.monthly_cache
 #    Format: timestamp|period_start|period_end|monthly_cost
@@ -74,10 +74,9 @@ get_cache_deps_file() {
 
 # Save current configuration dependencies to cache deps file
 # This allows detecting when config changes invalidate cached data
-# Usage: save_cache_dependencies <weekly_limit> <weekly_baseline_pct>
+# Usage: save_cache_dependencies <weekly_limit>
 save_cache_dependencies() {
     local weekly_limit=$1
-    local weekly_baseline_pct=$2
     local cache_deps_file=$(get_cache_deps_file)
 
     # Create JSON with current config state
@@ -86,8 +85,7 @@ save_cache_dependencies() {
   "version": "1.0",
   "updated": $(date +%s),
   "dependencies": {
-    "weekly_limit": $weekly_limit,
-    "weekly_baseline_pct": $weekly_baseline_pct
+    "weekly_limit": $weekly_limit
   }
 }
 EOF
@@ -96,29 +94,26 @@ EOF
 
 # Check if cached data dependencies are still valid
 # Returns 0 if valid, 1 if dependencies changed (cache should be invalidated)
-# Usage: validate_cache_dependencies <weekly_limit> <weekly_baseline_pct>
+# Usage: validate_cache_dependencies <weekly_limit>
 validate_cache_dependencies() {
     local weekly_limit=$1
-    local weekly_baseline_pct=$2
     local cache_deps_file=$(get_cache_deps_file)
 
     # If no deps file exists, create it (first run)
     if [[ ! -f "$cache_deps_file" ]]; then
-        save_cache_dependencies "$weekly_limit" "$weekly_baseline_pct"
+        save_cache_dependencies "$weekly_limit"
         return 0  # Valid (just created)
     fi
 
     # Read cached dependencies
     local cached_limit=$(jq -r '.dependencies.weekly_limit' "$cache_deps_file" 2>/dev/null)
-    local cached_baseline=$(jq -r '.dependencies.weekly_baseline_pct' "$cache_deps_file" 2>/dev/null)
 
     # Check if dependencies match
-    if [[ "$cached_limit" == "$weekly_limit" ]] && \
-       [[ "$cached_baseline" == "$weekly_baseline_pct" ]]; then
+    if [[ "$cached_limit" == "$weekly_limit" ]]; then
         return 0  # Valid
     else
         # Dependencies changed - update cache deps file and invalidate caches
-        save_cache_dependencies "$weekly_limit" "$weekly_baseline_pct"
+        save_cache_dependencies "$weekly_limit"
         return 1  # Invalid
     fi
 }
@@ -138,12 +133,11 @@ invalidate_all_caches() {
 
 # Validate cache dependencies and invalidate if needed
 # This should be called early in statusline.sh with current config values
-# Usage: check_and_update_cache_deps <weekly_limit> <weekly_baseline_pct>
+# Usage: check_and_update_cache_deps <weekly_limit>
 check_and_update_cache_deps() {
     local weekly_limit=$1
-    local weekly_baseline_pct=$2
 
-    if ! validate_cache_dependencies "$weekly_limit" "$weekly_baseline_pct"; then
+    if ! validate_cache_dependencies "$weekly_limit"; then
         # Dependencies changed - invalidate all caches
         invalidate_all_caches
     fi
