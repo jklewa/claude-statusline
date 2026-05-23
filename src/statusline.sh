@@ -460,6 +460,8 @@ TRANSCRIPT_PATH=$(echo "$input" | jq -r '.transcript_path // ""')
 # hardcoded COST_LIMIT. Empty means fall back to the ccusage path.
 OFFICIAL_5H_PCT=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
 OFFICIAL_5H_RESET=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+OFFICIAL_7D_PCT=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+OFFICIAL_7D_RESET=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
 
 # Get 5-hour window data from ccusage (needed by 5-HOUR WINDOW, TIMER, and/or TOKEN_RATE sections)
 # Only fetch if at least one of these sections is enabled
@@ -816,6 +818,14 @@ if [ "$SHOW_WEEKLY" = "true" ] || [ "$SHOW_DAILY" = "true" ]; then
     fi
 
     WEEKLY_PCT=$(awk "BEGIN {printf \"%.0f\", ($WEEK_COST / $WEEKLY_LIMIT) * 100}")
+
+    # Prefer Anthropic's official 7-day percentage when present. Overrides the
+    # ccusage+baseline estimate so the displayed % matches the console exactly.
+    # Recommend mode keeps the ccusage path below since it needs cycle-aware
+    # historical cost data the official field doesn't expose.
+    if [ -n "$OFFICIAL_7D_PCT" ]; then
+        WEEKLY_PCT=$(awk "BEGIN {printf \"%.0f\", $OFFICIAL_7D_PCT}")
+    fi
 fi
 
 # ====================================================================================
